@@ -12,9 +12,28 @@ export default async function handler(req,res){
     if(!verify.ok)return res.status(401).json({error:'Invalid session'});
     const user=await verify.json();
     const profile=await fetch(`${sbUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}&select=id,active,role`,{headers:{apikey:sbKey,Authorization:auth}});
-    if(!profile.ok)return res.status(403).json({error:'CRM access not verified'});
-    const profiles=await profile.json();
-    if(!profiles.some(p=>p.active&&['owner','admin','Owner/Admin'].includes(p.role)))return res.status(403).json({error:'Admin access required'});
+   if (!profile.ok) {
+  return res.status(403).json({
+    error: 'CRM profile verification failed'
+  });
+}
+
+const profiles = await profile.json();
+
+const isAdmin = profiles.some(p => {
+  const role = String(p.role || '')
+    .toLowerCase()
+    .replace(/[\s/_-]/g, '');
+
+  return p.active === true &&
+    ['owner', 'admin', 'owneradmin'].includes(role);
+});
+
+if (!isAdmin) {
+  return res.status(403).json({
+    error: 'Admin access required'
+  });
+}
     const key=process.env.BUDDYPUNCH_API_KEY;
     if(!key)return res.status(503).json({error:'Buddy Punch secret missing from this deployment'});
     const result={};
