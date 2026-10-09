@@ -1,0 +1,1 @@
+export default function handler(req,res){res.setHeader('Cache-Control','no-store');return res.status(200).json({ok:true,service:'link-solutions-crm-api',buddyPunchConfigured:Boolean(process.env.BUDDYPUNCH_API_KEY),authConfigured:Boolean(process.env.SUPABASE_PUBLISHABLE_KEY||process.env.VITE_SUPABASE_PUBLISHABLE_KEY||'sb_publishable_GXoY_gOCe_r2LJYYmgrBqg_qsrCq0Go')});}
