@@ -39,5 +39,152 @@ async function addChange(j){const title=prompt('Change order title');if(!title)r
 async function addNote(j){const note=prompt('Project note');if(!note)return;const {error}=await sb.from('job_notes').insert({job_id:j.id,author_id:S.session.user.id,note});if(error)alert(error.message);else{await log('jobs',j.id,'note_added');job(j.id)}}
 
 async function crewTime(){const c=el('content');c.innerHTML='<div class="section-head"><div><h2>Crew Time · Buddy Punch</h2><p>Read only connection test. Employee and location data is not yet assigned to jobs.</p></div></div><div id="bpstate" class="empty">Checking secure Buddy Punch connection…</div>';try{const token=S.session?.access_token;if(!token)throw Error('Sign in required');const r=await fetch('/api/buddypunch?resource=summary',{headers:{Authorization:'Bearer '+token}});const data=await r.json();if(!r.ok)throw Error(data.error||'Connection failed');const groups=[['Employees',data.employees],['Locations',data.locations],['Job codes',data.jobCodes],['Geofences',data.geofences]];el('bpstate').innerHTML=groups.map(([label,x])=>`<article class="metric" style="margin-bottom:12px"><small>${label}</small><strong>${x.ok?x.count:'Unavailable'}</strong><em>${x.ok?'Read successful':esc(x.error||'Check API permissions')}</em></article>`).join('')+'<p>Next: review job matching before importing time entries or calculating labor costs.</p>'}catch(e){el('bpstate').textContent='Buddy Punch is not connected yet: '+e.message}}
+
+async function crewTime() {
+  const c = el('content');
+  c.innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Crew Time · Buddy Punch</h2>
+        <p>Read only job-site matching preview.</p>
+      </div>
+    </div>
+    <div id="bpstate" class="empty">Checking Buddy Punch…</div>
+    <div id="bpmatches"></div>
+  `;
+
+  try {
+    const token = S.session?.access_token;
+    if (!token) throw Error('Sign in required');
+
+    const headers = { Authorization: 'Bearer ' + token };
+    const [summaryResponse, previewResponse] = await Promise.all([
+      fetch('/api/buddypunch?resource=summary', { headers }),
+      fetch('/api/buddypunch?resource=locationPreview', { headers })
+    ]);
+
+    const summary = await summaryResponse.json();
+    const preview = await previewResponse.json();
+
+    if (!summaryResponse.ok) {
+      throw Error(summary.error || 'Connection failed');
+    }
+    if (!previewResponse.ok) {
+      throw Error(preview.error || 'Location preview failed');
+    }
+
+    const groups = [
+      ['Employees', summary.employees],
+      ['Locations', summary.locations],
+      ['Job codes', summary.jobCodes],
+      ['Geofences', summary.geofences]
+    ];
+
+    el('bpstate').innerHTML = groups.map(([label, x]) => `
+      <article class="metric" style="margin-bottom:12px">
+        <small>${label}</small>
+        <strong>${x?.ok ? x.count : 'Unavailable'}</strong>
+        <em>${x?.ok ? 'Read successful' : esc(x?.error || 'Unavailable')}</em>
+      </article>
+    `).join('');
+
+    const normalize = value => String(value || '')
+      .toLowerCase()
+      .replace(/\b(street|st)\b/g, 'st')
+      .replace(/\b(road|rd)\b/g, 'rd')
+      .replace(/\b(drive|dr)\b/g, 'dr')
+      .replace(/\b(avenue|ave)\b/g, 'ave')
+      .replace(/\b(lane|ln)\b/g, 'ln')
+      .replace(/\b(massachusetts|ma)\b/g, 'ma')
+      .replace(/\b(rhode island|ri)\b/g, 'ri')
+      .replace(/[^a-z0-9]/g, '');
+
+    const addressValues = record =>
+      Object.entries(record || {})
+        .filter(([key, value]) =>
+          /address|street|location|job.site/i.test(key) &&
+          typeof value === 'string'
+        )
+        .map(([, value]) => value)
+        .filter(Boolean);
+
+    const jobs = S.jobs || [];
+    const locations = preview.preview || [];
+
+    const rows = locations.map(location => {
+      const locationName = location.name || '';
+      const target = normalize(locationName);
+
+      const candidates = jobs.map(job => {
+        const addresses = [
+          ...addressValues(job),
+          ...addressValues(job.customers)
+        ];
+
+        const exact = addresses.some(address =>
+          normalize(address) === target && target.length > 0
+        );
+
+        const possible = !exact && addresses.some(address => {
+          const a = normalize(address);
+          return a.length >= 8 &&
+            target.length >= 8 &&
+            (a.includes(target) || target.includes(a));
+        });
+
+        return {
+          job,
+          score: exact ? 2 : possible ? 1 : 0
+        };
+      }).filter(candidate => candidate.score > 0)
+        .sort((a, b) => b.score - a.score);
+
+      const best = candidates[0];
+
+      return {
+        locationName,
+        status: best?.score === 2
+          ? 'Exact match'
+          : best?.score === 1
+            ? 'Possible match'
+            : 'Needs review',
+        jobName: best
+          ? (best.job.title || name(best.job))
+          : 'Not matched'
+      };
+    });
+
+    el('bpmatches').innerHTML = `
+      <h3>Job Site Matching Preview</h3>
+      <p>Showing ${rows.length} sample Buddy Punch locations.
+         No changes have been saved.</p>
+      <div style="overflow-x:auto">
+        <table style="width:100%;text-align:left">
+          <thead>
+            <tr>
+              <th>Buddy Punch location</th>
+              <th>CRM job</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(row => `
+              <tr>
+                <td>${esc(row.locationName)}</td>
+                <td>${esc(row.jobName)}</td>
+                <td>${esc(row.status)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      <p>This preview checks available address fields only.
+         Unmatched locations can be reviewed manually later.</p>
+    `;
+  } catch (error) {
+    el('bpstate').textContent =
+      'Buddy Punch preview error: ' + error.message;
+  }
+}
 function feedback(){drawer('Beta Feedback','Tell us what should change while you are using the CRM.');el('body').innerHTML=`<div class="grid"><label>Category<select id="fc"><option>UX / Design</option><option>Bug</option><option>Workflow</option><option>Feature Request</option></select></label><label class="wide">Feedback<textarea id="fm" placeholder="What should we change?"></textarea></label></div><button class="primary" id="sendfb">Submit Feedback</button>`;el('sendfb').onclick=async()=>{const msg=el('fm').value.trim();if(!msg)return;const {error}=await sb.from('feedback').insert({created_by:S.session.user.id,page:S.tab,category:el('fc').value,message:msg,status:'open'});if(error)alert(error.message);else{alert('Feedback saved.');el('drawer').classList.add('hidden')}}}
 sb.auth.onAuthStateChange(async(_,s)=>{S.session=s;s?await load():login()});const {data:{session}}=await sb.auth.getSession();S.session=session;session?await load():login();
