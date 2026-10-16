@@ -36,7 +36,52 @@ if (!isAdmin) {
 }
     const key=process.env.BUDDYPUNCH_API_KEY;
     if(!key)return res.status(503).json({error:'Buddy Punch secret missing from this deployment'});
-    const result={};
+    if (req.query.resource === 'locationPreview') {
+  const response = await fetch(
+    'https://api2.buddypunch.com/location?limit=5',
+    {
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'X-Api-Version': '2025-03-01'
+      },
+      signal: AbortSignal.timeout(8000)
+    }
+  );
+
+  if (!response.ok) {
+    return res.status(502).json({
+      error: `Buddy Punch locations returned ${response.status}`
+    });
+  }
+
+  const payload = await response.json();
+
+  const items = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload.data)
+      ? payload.data
+      : Array.isArray(payload.results)
+        ? payload.results
+        : [];
+
+  const preview = items.slice(0, 5).map(item => ({
+    fields: Object.keys(item).filter(
+      k => !/(token|secret|password|key)/i.test(k)
+    ),
+    name: item.name ?? item.locationName ?? item.title ?? null,
+    address: item.address ?? item.streetAddress ??
+             item.street ?? item.address1 ?? null,
+    city: item.city ?? null,
+    state: item.state ?? null,
+    zip: item.zip ?? item.postalCode ?? null
+  }));
+
+  return res.status(200).json({
+    returned: items.length,
+    topLevelFields: Object.keys(payload),
+    preview
+  });
+}const result={};
     for(const [name,path] of Object.entries(RESOURCES)){
       const response=await fetch(`https://api2.buddypunch.com${path}?limit=1`,{headers:{Authorization:`Bearer ${key}`,'X-Api-Version':'2025-03-01'},signal:AbortSignal.timeout(8000)});
       if(response.ok){const body=await response.json();result[name]={ok:true,count:body.totalCount??body.data?.length??0};}
